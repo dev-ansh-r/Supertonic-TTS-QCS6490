@@ -24,49 +24,53 @@ echo "TTS Inference Pipeline - QCS6490 HTP"
 echo "=============================================="
 
 # ---------------------------------------------------------------------------
-# Model Input/Output Specifications (from cpp files):
+# Model Input/Output Specifications (from calibration files):
+# ALL INPUTS ARE FLOAT32! Model quantizes internally.
 # ---------------------------------------------------------------------------
 # 1. text_encoder_htp:
 #    Inputs:
-#      - text_ids:   [1, 128]      INT32   (no transpose)
-#      - style_ttl:  [1, 256, 50]  UINT8   (ONNX: [1,50,256] -> transpose)
-#      - text_mask:  [1, 128, 1]   UINT8   (ONNX: [1,1,128]  -> transpose)
+#      - text_ids:   [1, 128]      INT32   (512 bytes)
+#      - style_ttl:  [1, 50, 256]  FLOAT32 (51200 bytes) - NO transpose needed
+#      - text_mask:  [1, 1, 128]   FLOAT32 (512 bytes)   - NO transpose needed
 #    Output:
-#      - text_emb:   [1, 128, 256] UINT8
+#      - text_emb:   [1, 256, 128] FLOAT32
 #
 # 2. duration_predictor_htp:
 #    Inputs:
-#      - text_ids:   [1, 128]      INT32   (no transpose)
-#      - style_dp:   [1, 16, 8]    UINT8   (ONNX: [1,8,16]   -> transpose)
-#      - text_mask:  [1, 128, 1]   UINT8   (ONNX: [1,1,128]  -> transpose)
+#      - text_ids:   [1, 128]      INT32   (512 bytes)
+#      - style_dp:   [1, 8, 16]    FLOAT32 (512 bytes)   - NO transpose needed
+#      - text_mask:  [1, 1, 128]   FLOAT32 (512 bytes)   - NO transpose needed
 #    Output:
-#      - duration:   [1]           UINT8
+#      - duration:   [1]           FLOAT32
 #
 # 3. vector_estimator_htp:
 #    Inputs:
-#      - noisy_latent: [1, 256, 144] UINT8 (ONNX: [1,144,256] -> transpose)
-#      - text_emb:     [1, 128, 256] UINT8 (ONNX: [1,256,128] -> transpose)
-#      - style_ttl:    [1, 256, 50]  UINT8 (ONNX: [1,50,256]  -> transpose)
-#      - latent_mask:  [1, 256, 1]   UINT8 (ONNX: [1,1,256]   -> transpose)
-#      - text_mask:    [1, 128, 1]   UINT8 (ONNX: [1,1,128]   -> transpose)
-#      - current_step: [1]           UINT8
-#      - total_step:   [1]           UINT8
+#      - noisy_latent: [1, 144, 256] FLOAT32 (147456 bytes) - NO transpose needed
+#      - text_emb:     [1, 256, 128] FLOAT32 (131072 bytes) - from text_encoder
+#      - style_ttl:    [1, 50, 256]  FLOAT32 (51200 bytes)  - NO transpose needed
+#      - latent_mask:  [1, 1, 256]   FLOAT32 (1024 bytes)   - NO transpose needed
+#      - text_mask:    [1, 1, 128]   FLOAT32 (512 bytes)    - NO transpose needed
+#      - current_step: [1]           FLOAT32 (4 bytes)
+#      - total_step:   [1]           FLOAT32 (4 bytes)
 #    Output:
-#      - denoised_latent: [1, 256, 144] UINT8
+#      - denoised_latent: [1, 144, 256] FLOAT32
 #
 # 4. vocoder_htp:
 #    Inputs:
-#      - latent:     [1, 256, 144] UINT8   (ONNX: [1,144,256] -> transpose)
+#      - latent:     [1, 144, 256] FLOAT32 (147456 bytes) - NO transpose needed
 #    Output:
-#      - wav_tts:    [1, 786432]   UINT8
+#      - wav_tts:    [1, 786432]   FLOAT32
 # ---------------------------------------------------------------------------
 
 # Helper function to create input list files for qnn-net-run
+# All inputs for one inference must be on a SINGLE line, space-separated
+# Each line = one inference batch
 create_input_list() {
     local model_name=$1
     local input_list_file="$INPUT_DIR/${model_name}_input_list.txt"
     shift
-    echo "$@" > "$input_list_file"
+    # Write all input files on a single line, space-separated
+    echo "$*" > "$input_list_file"
     echo "$input_list_file"
 }
 
@@ -88,7 +92,7 @@ run_text_encoder() {
         "${INPUT_DIR}/text_mask.raw")
 
     qnn-net-run \
-        --model "${MODEL_DIR}/text_encoder_htp.so" \
+        --model "${MODEL_DIR}/libtext_encoder_htp.so" \
         --backend "$BACKEND_LIB" \
         --input_list "$input_list" \
         --output_dir "${OUTPUT_DIR}/text_encoder"
@@ -116,7 +120,7 @@ run_duration_predictor() {
         "${INPUT_DIR}/text_mask.raw")
 
     qnn-net-run \
-        --model "${MODEL_DIR}/duration_predictor_htp.so" \
+        --model "${MODEL_DIR}/libduration_predictor_htp.so" \
         --backend "$BACKEND_LIB" \
         --input_list "$input_list" \
         --output_dir "${OUTPUT_DIR}/duration_predictor"
@@ -137,14 +141,14 @@ run_vector_estimator() {
     # For now, assume it's provided in inputs/noisy_latent.raw
     cp "${INPUT_DIR}/noisy_latent.raw" "${OUTPUT_DIR}/current_latent.raw"
 
-    # Create step files
-    echo -n -e "\x${NUM_DIFFUSION_STEPS}" > "${OUTPUT_DIR}/total_step.raw"
+    # Create total_step file (FLOAT32 - 4 bytes)
+    python3 -c "import numpy as np; np.array([${NUM_DIFFUSION_STEPS}], dtype=np.float32).tofile('${OUTPUT_DIR}/total_step.raw')"
 
     for ((step=0; step<NUM_DIFFUSION_STEPS; step++)); do
         echo "  Denoising step $((step+1))/${NUM_DIFFUSION_STEPS}..."
 
-        # Create current_step file (UINT8)
-        printf '%b' "$(printf '\\x%02x' $step)" > "${OUTPUT_DIR}/current_step.raw"
+        # Create current_step file (FLOAT32 - 4 bytes)
+        python3 -c "import numpy as np; np.array([${step}], dtype=np.float32).tofile('${OUTPUT_DIR}/current_step.raw')"
 
         # Input files for vector_estimator:
         # - noisy_latent:  [1, 256, 144] UINT8 (36864 bytes) - transposed from [1, 144, 256]
@@ -165,7 +169,7 @@ run_vector_estimator() {
             "${OUTPUT_DIR}/total_step.raw")
 
         qnn-net-run \
-            --model "${MODEL_DIR}/vector_estimator_htp.so" \
+            --model "${MODEL_DIR}/libvector_estimator_htp.so" \
             --backend "$BACKEND_LIB" \
             --input_list "$input_list" \
             --output_dir "${OUTPUT_DIR}/vector_estimator_step${step}"
@@ -195,7 +199,7 @@ run_vocoder() {
         "${OUTPUT_DIR}/denoised_latent.raw")
 
     qnn-net-run \
-        --model "${MODEL_DIR}/vocoder_htp.so" \
+        --model "${MODEL_DIR}/libvocoder_htp.so" \
         --backend "$BACKEND_LIB" \
         --input_list "$input_list" \
         --output_dir "${OUTPUT_DIR}/vocoder"
