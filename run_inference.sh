@@ -13,7 +13,6 @@ OUTPUT_DIR="./outputs"
 NUM_DIFFUSION_STEPS=10  # Number of denoising steps for vector_estimator
 
 # QNN Runtime settings
-QNN_TARGET_ARCH="aarch64-android"  # or "aarch64-qnx" for qnx
 BACKEND_LIB="libQnnHtp.so"
 
 # Create directories
@@ -88,7 +87,7 @@ run_text_encoder() {
         "${INPUT_DIR}/text_mask.raw")
 
     qnn-net-run \
-        --model "${MODEL_DIR}/text_encoder_htp.so" \
+        --model "${MODEL_DIR}/libtext_encoder_htp.so" \
         --backend "$BACKEND_LIB" \
         --input_list "$input_list" \
         --output_dir "${OUTPUT_DIR}/text_encoder"
@@ -116,7 +115,7 @@ run_duration_predictor() {
         "${INPUT_DIR}/text_mask.raw")
 
     qnn-net-run \
-        --model "${MODEL_DIR}/duration_predictor_htp.so" \
+        --model "${MODEL_DIR}/libduration_predictor_htp.so" \
         --backend "$BACKEND_LIB" \
         --input_list "$input_list" \
         --output_dir "${OUTPUT_DIR}/duration_predictor"
@@ -137,14 +136,14 @@ run_vector_estimator() {
     # For now, assume it's provided in inputs/noisy_latent.raw
     cp "${INPUT_DIR}/noisy_latent.raw" "${OUTPUT_DIR}/current_latent.raw"
 
-    # Create step files
-    echo -n -e "\x${NUM_DIFFUSION_STEPS}" > "${OUTPUT_DIR}/total_step.raw"
+    # Create step files (1-byte UINT8)
+    python3 -c "open('${OUTPUT_DIR}/total_step.raw','wb').write(bytes([${NUM_DIFFUSION_STEPS}]))"
 
     for ((step=0; step<NUM_DIFFUSION_STEPS; step++)); do
         echo "  Denoising step $((step+1))/${NUM_DIFFUSION_STEPS}..."
 
-        # Create current_step file (UINT8)
-        printf '%b' "$(printf '\\x%02x' $step)" > "${OUTPUT_DIR}/current_step.raw"
+        # Create current_step file (1-byte UINT8)
+        python3 -c "open('${OUTPUT_DIR}/current_step.raw','wb').write(bytes([${step}]))"
 
         # Input files for vector_estimator:
         # - noisy_latent:  [1, 256, 144] UINT8 (36864 bytes) - transposed from [1, 144, 256]
@@ -165,7 +164,7 @@ run_vector_estimator() {
             "${OUTPUT_DIR}/total_step.raw")
 
         qnn-net-run \
-            --model "${MODEL_DIR}/vector_estimator_htp.so" \
+            --model "${MODEL_DIR}/libvector_estimator_htp.so" \
             --backend "$BACKEND_LIB" \
             --input_list "$input_list" \
             --output_dir "${OUTPUT_DIR}/vector_estimator_step${step}"
@@ -195,7 +194,7 @@ run_vocoder() {
         "${OUTPUT_DIR}/denoised_latent.raw")
 
     qnn-net-run \
-        --model "${MODEL_DIR}/vocoder_htp.so" \
+        --model "${MODEL_DIR}/libvocoder_htp.so" \
         --backend "$BACKEND_LIB" \
         --input_list "$input_list" \
         --output_dir "${OUTPUT_DIR}/vocoder"
