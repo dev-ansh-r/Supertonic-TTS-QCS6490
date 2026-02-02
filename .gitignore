@@ -1,0 +1,14 @@
+# IDE and environment
+.claude
+.env
+.vscode
+__pycache__/
+
+# Generated outputs
+*.log
+*.tmp
+output/
+
+# Old/deprecated files
+IO_Converter.ipynb
+run_inference.sh
