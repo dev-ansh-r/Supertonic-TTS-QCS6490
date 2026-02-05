@@ -1,3 +1,17 @@
+---
+license: openrail
+base_model: Supertone/supertonic-2
+tags:
+  - tts
+  - text-to-speech
+  - qualcomm
+  - qnn
+  - quantized
+  - qcs6490
+  - hexagon
+pipeline_tag: text-to-speech
+---
+
 # Supertonic TTS Quantization for QCS6490
 
 A step-by-step guide to quantize the [Supertonic TTS](https://huggingface.co/Supertone/supertonic) model for Qualcomm QCS6490 using QAIRT/QNN.
@@ -107,4 +121,13 @@ These `.so` files are compiled from the `.cpp` sources and are ready to be deplo
 
 ## Note
 
-> Inference script and sample application are not provided. I have been working on optimizing the quantized models for better performance and compatibility with QCS6490 using AIMET.
+> Inference script and sample application are not provided. Optimization work is ongoing and will be released soon.
+
+## License
+
+This model inherits the licensing from [Supertone/supertonic-2](https://huggingface.co/Supertone/supertonic-2):
+
+- **Model:** OpenRAIL-M License
+- **Code:** MIT License
+
+Copyright (c) 2026 Supertone Inc. (original model)
